@@ -423,6 +423,7 @@ var buildfire = {
 		, 'services.commerce.inAppPurchase._triggerOnPurchaseResult'
 		, 'services.reportAbuse._triggerOnAdminResponse'
 		, 'geo.session._triggerOnSessionWatchChange'
+        , 'analytics.injectAmplitude'
 	]
 	, _postMessageHandler: function (e) {
 		if (e.source === window) {
@@ -1505,7 +1506,10 @@ var buildfire = {
 				params = {};
 			var p = new Packet(null, 'analytics.showReports', params);
 			buildfire._sendPacket(p, callback);
-		}
+		},
+        injectAmplitude: function(params, callback) {
+debugger
+        }
 	}
 	/// ref: https://github.com/BuildFire/sdk/wiki/How-to-use-Datastore
 	, datastore: {
@@ -4468,12 +4472,24 @@ var buildfire = {
 		}
 		,overrideNativeLocalStorage: function() {
 			localStorage.getItem = function (key) {
+                if (key && key.indexOf('AMP_') === 0) {
+                    console.error('############## Using native localStorage get for key:', key);
+                    return window.localStorage.getItem(key);
+                }
 				return buildfire.localStorage.getItem(key);
 			};
 			localStorage.setItem = function (key, value) {
+                if (key && key.indexOf('AMP_') === 0) {
+                    console.error('############## Using native localStorage set for key:', key);
+                    return window.localStorage.setItem(key, value);
+                }
 				return buildfire.localStorage.setItem(key, value);
 			};
 			localStorage.removeItem = function (key) {
+                if (key && key.indexOf('AMP_') === 0) {
+                    console.error('############## Using native localStorage remove for key:', key);
+                    return window.localStorage.removeItem(key);
+                }
 				return buildfire.localStorage.removeItem(key);
 			};
 			localStorage.clear = function () {
