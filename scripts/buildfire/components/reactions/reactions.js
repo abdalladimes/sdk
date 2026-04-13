@@ -715,6 +715,7 @@ buildfire.components.reactions = (() => {
         static longPressPeriod = 500; //  500 ms
         static userListLimit = 250; // 250 users maximum
         static userListPageSize = 50; // 50 records per page
+        static _authHandlersSet = false;
 
         // options = {itemId, getUsersData, getSummariesData}
         static debounce(options) {
@@ -974,6 +975,9 @@ buildfire.components.reactions = (() => {
                     this.user = user;
                 }
 
+                if (this._authHandlersSet) return callback(err, this.user);
+
+                this._authHandlersSet = true;
                 buildfire.auth.onLogin((loggedUser) => {
                     this._onLoginLogoutHandler(loggedUser);
                     this.user = loggedUser;
@@ -1200,12 +1204,18 @@ buildfire.components.reactions = (() => {
                 reactionIconsContainer.classList.remove('reactions-hidden');
             }
 
-            document.body.addEventListener('click', (event) => {
+            if (this._onDocumentClick) {
+                document.body.removeEventListener('click', this._onDocumentClick);
+            }
+
+            this._onDocumentClick = (event) => {
                 event.preventDefault();
                 if (event && !this.container.contains(event.target)) {
                     this._hideReactionIcons(this.container);
                 }
-            });
+            };
+
+            document.body.addEventListener('click', this._onDocumentClick);
         }
 
         _validateUserAndReact(newReactionUUID, icon) {
@@ -1487,6 +1497,10 @@ buildfire.components.reactions = (() => {
         }
 
         _hideReactionIcons(hideElement) {
+            if (this._onDocumentClick) {
+                document.body.removeEventListener('click', this._onDocumentClick);
+                this._onDocumentClick = null;
+            }
             if (hideElement) {
                 let reactionBox = hideElement.querySelector('[bf-reaction-icon-container]')
                 reactionBox.classList.remove('reaction-container-show');
