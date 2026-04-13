@@ -184,13 +184,13 @@ var buildfire = {
 							colno: event.colno,
 							lineno: event.lineno,
 							message: event.message,
-							stack: event.error && event.error.stack ? event.error && event.error.stack : "n/a",
+							stack: (event.error && event.error.stack) ? event.error.stack : "n/a",
 							url: event.filename
 						}
 					});
 				}
 				originalConsoleError('Error: ' + event.message, ' Script: ' + event.filename, ' Line: ' + event.lineno
-					, ' Column: ' + event.colno, ' StackTrace: ' + event.error && event.error.stack ? event.error && event.error.stack : "n/a");
+					, ' Column: ' + event.colno, ' StackTrace: ' + (event.error && event.error.stack) ? event.error.stack : "n/a");
 			});
 		},
 		log: function (options, callback) {
@@ -269,6 +269,8 @@ var buildfire = {
 			this.events[event] = [];
 		}
 		, trigger: function (event, data) {
+            const internalEvent = new CustomEvent(`_internal_${event}`, { detail: data });
+            window.dispatchEvent(internalEvent);
 			if (this.events[event])
 				for (var i = 0; i < this.events[event].length; i++) {
 					try {
@@ -325,11 +327,14 @@ var buildfire = {
 			buildfire.getContext((err, context) => {
 				if (err) return console.error(err);
 				if (context && context.liveMode === 0) {
-					buildfire.messaging.onReceivedMessage = function(message) {
-						if (message && message.action === 'reloadUserCodePlugin') {
+					window.addEventListener('_internal_messageReceived', function(e) {
+						if (e.detail && e.detail.action === 'reloadUserCodePlugin') {
 							window.location.reload(true);
+						} else if (e.detail && e.detail.action === 'changeUserCodePluginUrl' && e.detail.url) {
+							// Change to the provided URL
+							window.location.href = e.detail.url + window.location.search + '&isUserCodePlugin=true';
 						}
-					};
+					});
 					window.onerror = function(message, source, lineno, colno, error) {
 						buildfire.dialog.toast({
 							message: `${error && error.message ? error.message : message} \n line ${lineno}, col: ${colno}`
@@ -338,6 +343,15 @@ var buildfire = {
 				}
 			});
 		}
+        // Inject Amplitude if amplitudeData is present in querystring
+        try {
+            if (window.parsedQuerystring && window.parsedQuerystring.amplitudeData) {
+                const amplitudeData = JSON.parse(decodeURIComponent(window.parsedQuerystring.amplitudeData));
+                buildfire.analytics.injectAmplitude(amplitudeData);
+            }
+        } catch (error) {
+            console.error('Failed to parse amplitudeData or inject Amplitude: ', error);
+        }
 
 		if (window.location.pathname.indexOf('/widget/') >= 0 && buildfire.options.enablePluginJsonLoad) {
 			buildfire.getContext((err, context) => {
@@ -389,7 +403,8 @@ var buildfire = {
 		, 'publicData.triggerOnRefresh'
 		, 'appData.triggerOnUpdate'
 		, 'appData.triggerOnRefresh'
-		, 'messaging.onReceivedMessage'
+		, 'messaging.onReceivedMessage' // TODO: should be deleted later, kept for backward compatibility when deploying
+		, 'messaging.triggerOnReceivedMessage'
 		, 'messaging.onReceivedBroadcast'
 		, 'dynamic.triggerContextChange'
 		, 'dynamic.onReceivedWidgetContextRequest'
@@ -423,6 +438,7 @@ var buildfire = {
 		, 'services.commerce.inAppPurchase._triggerOnPurchaseResult'
 		, 'services.reportAbuse._triggerOnAdminResponse'
 		, 'geo.session._triggerOnSessionWatchChange'
+        , 'analytics.injectAmplitude'
 	]
 	, _postMessageHandler: function (e) {
 		if (e.source === window) {
@@ -450,12 +466,25 @@ var buildfire = {
 			}
 		}
 
+		if (!packet.cmd) {
+			return;
+		}
+
+		var cmd = packet.cmd;
+		if (cmd.startsWith('buildfire:')) {
+			cmd = cmd.substring(10);
+		} else {
+			buildfire.logger.log({ level: 'warn', message: `sdk cmd missing buildfire: prefix: ${cmd}` });
+			// TODO: uncomment to force just accepting cmd with (buildfire:) prefix
+			// return;
+		}
+
 		if (packet.id && buildfire._callbacks[packet.id]) {
 			buildfire._callbacks[packet.id](packet.error, packet.data);
 			delete buildfire._callbacks[packet.id];
 		}
-		else if (buildfire._whitelistedCommands.indexOf(packet.cmd) + 1) {
-			var sequence = packet.cmd.split('.');
+		else if (buildfire._whitelistedCommands.indexOf(cmd) + 1) {
+			var sequence = cmd.split('.');
 
 			var obj = buildfire;
 			var parent = buildfire;
@@ -555,6 +584,9 @@ var buildfire = {
 
 		if (parent && packet) {
 			if(packet.data && typeof(angular) != 'undefined') packet.data= sanitize(packet.data);
+			if(packet.cmd && !packet.cmd.startsWith('buildfire:')) {
+				packet.cmd = 'buildfire:' + packet.cmd;
+			}
 			parent.postMessage(packet, '*');
 		}
 	}
@@ -1426,10 +1458,11 @@ var buildfire = {
 			}
 			let lightBodyText = appTheme.colors.bodyText;
 			if (appTheme.colors.bodyText?.startsWith('#')) { // just support hex colors
-				// create a new color, which is the bodyText's color with an opacity (33%)
-				lightBodyText = `${appTheme.colors.bodyText}54`;
+				// create a new color, which is the bodyText's color with an opacity (20%)
+				lightBodyText = `${appTheme.colors.bodyText}34`;
 			}
 			css += ':root {'
+				+ '--bf-theme-button-text: #fff !important;'
                 + '--bf-theme-primary: ' + appTheme.colors.primaryTheme + ' !important;'
                 + '--bf-theme-success: ' + appTheme.colors.successTheme + ' !important;'
                 + '--bf-theme-warning: ' + appTheme.colors.warningTheme + ' !important;'
@@ -1527,6 +1560,46 @@ var buildfire = {
 				params = {};
 			var p = new Packet(null, 'analytics.showReports', params);
 			buildfire._sendPacket(p, callback);
+		},
+        injectAmplitude: function (data) {
+            const html = document.getElementsByTagName('html')[0];
+            const amplitudeScript = document.createElement('script');
+            amplitudeScript.type = 'text/javascript';
+            amplitudeScript.src = 'https://cdn.amplitude.com/libs/analytics-browser-2.11.1-min.js.gz';
+            const amplitudeSessionReplayScript = document.createElement('script');
+            amplitudeSessionReplayScript.type = 'text/javascript';
+            amplitudeSessionReplayScript.src = 'https://cdn.amplitude.com/libs/plugin-session-replay-browser-1.8.0-min.js.gz';
+
+            const script = document.createElement('script');
+            script.type = 'text/javascript';
+
+            amplitudeScript.onload = function() {
+                html.appendChild(amplitudeSessionReplayScript);
+                amplitudeSessionReplayScript.onload = function() {
+                    function initAmplitude() {
+                        const config = {
+                            deviceId: data.deviceId,
+                            sessionId: parseInt(data.sessionId),
+                            defaultTracking: true
+                        };
+
+                        const sessionReplayTracking = window.sessionReplay.plugin({
+                            sampleRate: 1
+                        });
+
+                        window.amplitude.add(sessionReplayTracking);
+                        amplitude.init(data.apiKey, null, config);
+                        amplitude.track('iFrame Injected and Session Linked');
+                    };
+
+                    if (document.readyState === 'complete' || document.readyState === 'interactive') {
+                        initAmplitude();
+                    } else {
+                        document.addEventListener('DOMContentLoaded', initAmplitude);
+                    }
+                };
+            };
+            html.appendChild(amplitudeScript);
 		}
 	}
 	/// ref: https://github.com/BuildFire/sdk/wiki/How-to-use-Datastore
@@ -3185,8 +3258,9 @@ var buildfire = {
 			if (options.blur) {
 				blur = options.blur;
 			}
+			let mode = options.mode;
 
-			let result = imageCdnHandler.constructUrl({width, height, url, blur, method: 'crop'});
+			let result = imageCdnHandler.constructUrl({width, height, url, blur, method: 'crop', mode});
 
 			this._handleElement(element, result, callback);
 
@@ -3425,11 +3499,11 @@ var buildfire = {
 				if (!isSupportedExtension && !isUnsplashImage) return false;
 				return this._transformToImgix(url) != null; // return false if the url wasn't supported in imgix
 			},
-			constructUrl: function({width, height, url, blur, method}) {
+			constructUrl: function({width, height, url, blur, method, mode}) {
 				const baseImgUrl = this._transformToImgix(url);
 				if (!baseImgUrl) return url;
 
-				const paramsToRemove = ['width', 'height', 'fit'];
+				const paramsToRemove = ['width', 'height', 'fit', 'crop'];
 
 				const cleanedUrl = this._removeImageParams(baseImgUrl, paramsToRemove);
 
@@ -3437,6 +3511,9 @@ var buildfire = {
 
 				if (method === 'crop' && (width || height)) { //allow crop only if width or height provided
 					urlObj.searchParams.set('fit', 'crop');
+					if (mode === 'entropy') {
+						urlObj.searchParams.set('crop', 'entropy');
+					}
 				}
 				if (width) {
 					urlObj.searchParams.set('width', width);
@@ -3588,37 +3665,37 @@ var buildfire = {
 	, videoLib: {
 		toCdnUrl: function ({ videoUrl, quality }) {
 			if (!videoUrl) return videoUrl;
-			
+
 			const forceImgix = buildfire.getContext()?.forceImgix;
 			if (!forceImgix) {
 				return videoUrl;
 			}
-			
+
 			const imgixUrl = `https://buildfire-proxy.imgix.net/cdn/${encodeURIComponent(videoUrl)}`;
 			const urlObj = new URL(imgixUrl);
-			
+
 			if (quality) {
 				urlObj.searchParams.set('q', quality);
 			}
 			urlObj.searchParams.set('fm', 'mp4');
-						
+
 			return urlObj.toString()
 		},
 		toThumbnailCdnUrl: function ({ videoUrl, atSecond = 'auto' }) {
 			if (!videoUrl) return '';
-			
+
 			const forceImgix = buildfire.getContext()?.forceImgix;
 			if (!forceImgix) {
 				return '';
 			}
-			
+
 			const imgixUrl = `https://buildfire-proxy.imgix.net/cdn/${encodeURIComponent(videoUrl)}`;
 			const urlObj = new URL(imgixUrl);
-			
+
 			urlObj.searchParams.set('video-thumbnail', atSecond === 'auto' ? 'auto' : atSecond);
 			// urlObj.searchParams.set('q', quality); // uncomment this line and pass quality to set quality for thumbnail images
 			urlObj.searchParams.set('auto', 'format');
-			
+
 			return urlObj.toString();
 		}
 	}
@@ -3841,6 +3918,10 @@ var buildfire = {
 		}
 		, onReceivedMessage: function (message) {
 			console.info('onReceivedMessage ignored', window.location);
+		},
+		triggerOnReceivedMessage: function (message) {
+			buildfire.eventManager.trigger('messageReceived', message);
+			buildfire.messaging.onReceivedMessage(message)
 		}
 		, sendMessageToService: function (data) {
 			var p = new Packet(null, 'messaging.sendMessageToService', data);
@@ -3905,6 +3986,16 @@ var buildfire = {
 		}
 		, clone: function (options, callback) {
 			var p = new Packet(null, 'pluginInstances.clone', options);
+			buildfire._sendPacket(p, callback);
+		}
+		, showInstallPluginInstanceDialog: function (options, callback) {
+			var p = new Packet(null, 'pluginInstances.showInstallPluginInstanceDialog', options);
+			buildfire._sendPacket(p, callback);
+		}
+	}
+	, developer: {
+		publish: function(options, callback) {
+			var p = new Packet(null, 'developer.publish', options);
 			buildfire._sendPacket(p, callback);
 		}
 	}
@@ -4084,10 +4175,46 @@ var buildfire = {
 	/// ref: https://github.com/BuildFire/sdk/wiki/Spinners
 	, spinner: {
 		show: function (options) {
-			buildfire._sendPacket(new Packet(null, 'spinner.show', options));
+			// TODO: long term fix for workaround to prevent existing plugins with un-intended control calls for spinner.show()
+			if (options && options.loadingMessage && window.location.pathname.indexOf('/control/') >= 0) {
+				buildfire.spinner._showControlSpinner(options);
+			} else {
+				buildfire._sendPacket(new Packet(null, 'spinner.show', options));
+			}
 		}
 		, hide: function () {
-			buildfire._sendPacket(new Packet(null, 'spinner.hide'));
+			if (window.location.pathname.indexOf('/control/') >= 0) {
+				buildfire.spinner._hideControlSpinner();
+			} else {
+				buildfire._sendPacket(new Packet(null, 'spinner.hide'));
+			}
+		}
+		, _showControlSpinner: function (options) {
+			const animationElement = buildfire.spinner._createAnimationElement(options);
+			animationElement.classList.add('ai-progress-overlay');
+			document.body.prepend(animationElement);
+		}
+		, _hideControlSpinner: function () {
+			const progressElement = document.querySelector('.ai-progress-overlay');
+			if (progressElement) progressElement.parentElement.removeChild(progressElement);
+		}
+		, _createAnimationElement: function (options) {
+			let loadingMessage = 'Loading...';
+			if (options && options.loadingMessage && typeof options.loadingMessage === 'string') {
+				loadingMessage = options.loadingMessage;
+			}
+			const animationElement = document.createElement('div');
+			animationElement.classList.add('ai-progress');
+			animationElement.innerHTML =
+				`<div id="cp-container-loader">
+					<div class="ai-animation">
+						<div class="square sq1"></div>
+						<div class="square sq2"></div>
+						<div class="square sq3"></div>
+					</div>
+					<p class="ai-text">${loadingMessage}</p>
+				</div>`;
+			return animationElement;
 		}
 	}
 	/// ref: https://github.com/BuildFire/sdk/wiki/How-to-use-Auth
@@ -4541,13 +4668,29 @@ var buildfire = {
 			});
 		}
 		,overrideNativeLocalStorage: function() {
+			const nativeGetItem = window.localStorage.getItem;
+			const nativeSetItem = window.localStorage.setItem;
+			const nativeRemoveItem = window.localStorage.removeItem;
+
 			localStorage.getItem = function (key) {
+                // bypass buildfire localStorage for Amplitude keys in web environment
+                if (key && (key.indexOf('AMP_') === 0 || key.toLowerCase().includes('amplitude')) && buildfire.isWeb()) {
+                    return nativeGetItem.call(window.localStorage, key);
+                }
 				return buildfire.localStorage.getItem(key);
 			};
 			localStorage.setItem = function (key, value) {
+                // bypass buildfire localStorage for Amplitude keys in web environment
+                if (key && (key.indexOf('AMP_') === 0 || key.toLowerCase().includes('amplitude')) && buildfire.isWeb()) {
+                    return nativeSetItem.call(window.localStorage, key, value);
+				}
 				return buildfire.localStorage.setItem(key, value);
 			};
 			localStorage.removeItem = function (key) {
+				// bypass buildfire localStorage for Amplitude keys in web environment
+				if (key && (key.indexOf('AMP_') === 0 || key.toLowerCase().includes('amplitude')) && buildfire.isWeb()) {
+					return nativeRemoveItem.call(window.localStorage, key);
+				}
 				return buildfire.localStorage.removeItem(key);
 			};
 			localStorage.clear = function () {
