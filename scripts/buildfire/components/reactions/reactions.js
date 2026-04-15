@@ -715,6 +715,7 @@ buildfire.components.reactions = (() => {
         static longPressPeriod = 500; //  500 ms
         static userListLimit = 250; // 250 users maximum
         static userListPageSize = 50; // 50 records per page
+        static _authHandlersSet = false;
 
         // options = {itemId, getUsersData, getSummariesData}
         static debounce(options) {
@@ -974,6 +975,9 @@ buildfire.components.reactions = (() => {
                     this.user = user;
                 }
 
+                if (this._authHandlersSet) return callback(err, this.user);
+                this._authHandlersSet = true;
+
                 window.addEventListener('_internal_authOnLogin', (event) => {
                     const loggedUser = event.detail;
                     this._onLoginLogoutHandler(loggedUser);
@@ -1201,12 +1205,18 @@ buildfire.components.reactions = (() => {
                 reactionIconsContainer.classList.remove('reactions-hidden');
             }
 
-            document.body.addEventListener('click', (event) => {
+            if (this._onDocumentClick) {
+                document.body.removeEventListener('click', this._onDocumentClick);
+            }
+
+            this._onDocumentClick = (event) => {
                 event.preventDefault();
                 if (event && !this.container.contains(event.target)) {
                     this._hideReactionIcons(this.container);
                 }
-            });
+            };
+
+            document.body.addEventListener('click', this._onDocumentClick);
         }
 
         _validateUserAndReact(newReactionUUID, icon) {
@@ -1277,7 +1287,7 @@ buildfire.components.reactions = (() => {
                         } else if (result.status === 'updated') {
                             ReactionsSummaries.decrement({ itemId: selectedReaction.itemId, reactionType: result.oldData.reactions[0].reactionType }, (err, res) => {
                                 if (err) {
-                                    this.onError({ itemType: this.itemType, itemId: this.itemId, errorCode: '5002', message: 'error while updating the data, '+ err });
+                                    this.onError({ itemType: this.itemType, itemId: this.itemId, errorCode: '5002', message: 'error while updating the data, ' + err });
                                     return console.error(err);
                                 }
                             });
@@ -1287,7 +1297,7 @@ buildfire.components.reactions = (() => {
                                 this._checkPendingRequest();
 
                                 if (err) {
-                                    this.onError({ itemType: this.itemType, itemId: this.itemId, errorCode: '5002', message: 'error while updating the data, '+ err });
+                                    this.onError({ itemType: this.itemType, itemId: this.itemId, errorCode: '5002', message: 'error while updating the data, ' + err });
                                     return console.error(err)
                                 }
                                 if (res.status === 'done') {
@@ -1322,7 +1332,7 @@ buildfire.components.reactions = (() => {
                 Reactions.unReactReact(reactOptions, (error, result) => {
                     if (error) {
                         this._renderReactionIconsBox({ oldIcon: icon, newIcon: this.container.querySelector(`[bf-reaction-type="${userReactUUID}"]`) });
-                        this.onError({ itemType: this.itemType, itemId: this.itemId, errorCode: '5002', message: 'error while updating the data, '+ error });
+                        this.onError({ itemType: this.itemType, itemId: this.itemId, errorCode: '5002', message: 'error while updating the data, ' + error });
                         return console.error('Error while updated the Reaction: ' + error)
                     } else if (result) {
                         // reaction updated successfully
@@ -1331,14 +1341,14 @@ buildfire.components.reactions = (() => {
                             ReactionsSummaries.decrement({ itemId, reactionType: userReactUUID }, (err, res) => {
                                 this._checkPendingRequest();
                                 if (err) {
-                                    this.onError({ itemType: this.itemType, itemId: this.itemId, errorCode: '5002', message: 'error while updating the data, '+ err });
+                                    this.onError({ itemType: this.itemType, itemId: this.itemId, errorCode: '5002', message: 'error while updating the data, ' + err });
                                     return console.error(err)
                                 }
                             });
                             ReactionsSummaries.increment({ itemId, reactionType: selectedReaction.reactionType, userId }, (err, res) => {
                                 this._checkPendingRequest();
                                 if (err) {
-                                    this.onError({ itemType: this.itemType, itemId: this.itemId, errorCode: '5002', message: 'error while updating the data, '+ err });
+                                    this.onError({ itemType: this.itemType, itemId: this.itemId, errorCode: '5002', message: 'error while updating the data, ' + err });
                                     return console.error(err)
                                 }
                             });
@@ -1347,7 +1357,7 @@ buildfire.components.reactions = (() => {
                             ReactionsSummaries.increment({ itemId, reactionType: selectedReaction.reactionType, userId }, (err, res) => {
                                 this._checkPendingRequest();
                                 if (err) {
-                                    this.onError({ itemType: this.itemType, itemId: this.itemId, errorCode: '5002', message: 'error while updating the data, '+ err });
+                                    this.onError({ itemType: this.itemType, itemId: this.itemId, errorCode: '5002', message: 'error while updating the data, ' + err });
                                     return console.error(err)
                                 }
                             });
@@ -1357,7 +1367,7 @@ buildfire.components.reactions = (() => {
                             // nothing will be happened
                         }
                         let groupName = ReactionsTypes.itemsReactionsGroupName[this._itemId];
-                        this.onUpdate({ status: 'update', reactionType: selectedReaction.reactionType, itemId:this.itemId, userId, itemType: this.itemType, name: groupName });
+                        this.onUpdate({ status: 'update', reactionType: selectedReaction.reactionType, itemId: this.itemId, userId, itemType: this.itemType, name: groupName });
                     }
                 })
             }
@@ -1399,7 +1409,7 @@ buildfire.components.reactions = (() => {
                             // nothing will be happened
                         }
                         let groupName = ReactionsTypes.itemsReactionsGroupName[this._itemId];
-                        this.onUpdate({ status: 'delete', reactionType, itemId:this.itemId, userId, itemType: this.itemType, name: groupName });
+                        this.onUpdate({ status: 'delete', reactionType, itemId: this.itemId, userId, itemType: this.itemType, name: groupName });
                     }
                 });
             }
@@ -1488,6 +1498,10 @@ buildfire.components.reactions = (() => {
         }
 
         _hideReactionIcons(hideElement) {
+            if (this._onDocumentClick) {
+                document.body.removeEventListener('click', this._onDocumentClick);
+                this._onDocumentClick = null;
+            }
             if (hideElement) {
                 let reactionBox = hideElement.querySelector('[bf-reaction-icon-container]')
                 reactionBox.classList.remove('reaction-container-show');
@@ -1525,7 +1539,7 @@ buildfire.components.reactions = (() => {
                     } else {
                         callback();
                     }
-                  });
+                });
             }
 
             let _setUsersList = (reactions, index, callBack) => {
@@ -1535,55 +1549,55 @@ buildfire.components.reactions = (() => {
                 if (reactionObject) {
                     let url = reactionObject.selectedUrl;
 
-                        let user = usersArr.find(user => user._id === reaction.data.userId);
-                        if (!user) user = { // handle deleted user
-                            displayName: 'User',
-                            imageUrl: 'https://app.buildfire.com/app/media/avatar.png'
-                        };
-                        let userName = user.displayName ? user.displayName : user.firstName ? user.firstName : 'User';
-                        let userImage = user.imageUrl ? user.imageUrl : 'https://app.buildfire.com/app/media/avatar.png';
-                        userImage = buildfire.imageLib.resizeImage(userImage, { size: "xs", aspect: "1:1" });
+                    let user = usersArr.find(user => user._id === reaction.data.userId);
+                    if (!user) user = { // handle deleted user
+                        displayName: 'User',
+                        imageUrl: 'https://app.buildfire.com/app/media/avatar.png'
+                    };
+                    let userName = user.displayName ? user.displayName : user.firstName ? user.firstName : 'User';
+                    let userImage = user.imageUrl ? user.imageUrl : 'https://app.buildfire.com/app/media/avatar.png';
+                    userImage = buildfire.imageLib.resizeImage(userImage, { size: "xs", aspect: "1:1" });
 
-                        // create user list item
-                        const listItem = document.createElement('div');
-                        // Create the main div
-                        const div = document.createElement('div');
-                        div.style = 'display:flex; gap:1rem; align-items:center';
+                    // create user list item
+                    const listItem = document.createElement('div');
+                    // Create the main div
+                    const div = document.createElement('div');
+                    div.style = 'display:flex; gap:1rem; align-items:center';
 
-                        // Create the user image
-                        const img = document.createElement('img');
-                        img.style = "border-radius:100%; width:42px; height:42px; -khtml-user-select: none; -moz-user-select: none; -ms-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-user-select: none;";
-                        img.alt = 'user image';
-                        img.src = userImage;
-                        div.appendChild(img);
+                    // Create the user image
+                    const img = document.createElement('img');
+                    img.style = "border-radius:100%; width:42px; height:42px; -khtml-user-select: none; -moz-user-select: none; -ms-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-user-select: none;";
+                    img.alt = 'user image';
+                    img.src = userImage;
+                    div.appendChild(img);
 
-                        // Create the user name paragraph
-                        const p = document.createElement('p');
-                        p.style = "overflow:auto; max-width: 75%; margin:0 !important;";
-                        p.textContent = userName;
-                        div.appendChild(p);
+                    // Create the user name paragraph
+                    const p = document.createElement('p');
+                    p.style = "overflow:auto; max-width: 75%; margin:0 !important;";
+                    p.textContent = userName;
+                    div.appendChild(p);
 
-                        // Create the span with the reaction icon
-                        const span = document.createElement('span');
-                        span.style = "position: absolute;bottom: 0;left: 2.6rem;width: 2rem;height: 2rem;display: flex;align-items: center;justify-content: center; margin-left:0 !important;";
+                    // Create the span with the reaction icon
+                    const span = document.createElement('span');
+                    span.style = "position: absolute;bottom: 0;left: 2.6rem;width: 2rem;height: 2rem;display: flex;align-items: center;justify-content: center; margin-left:0 !important;";
 
-                        // Create the reaction icon within the span
-                        const imgIcon = document.createElement('img');
-                        imgIcon.style = "width: 2rem;height: 2rem; border-radius:100%;" ;
-                        imgIcon.src = url;
-                        span.appendChild(imgIcon);
-                        div.appendChild(span);
+                    // Create the reaction icon within the span
+                    const imgIcon = document.createElement('img');
+                    imgIcon.style = "width: 2rem;height: 2rem; border-radius:100%;";
+                    imgIcon.src = url;
+                    span.appendChild(imgIcon);
+                    div.appendChild(span);
 
-                        listItem.appendChild(div);
+                    listItem.appendChild(div);
 
-                        listItems.push({
-                            text: listItem.innerHTML
-                        })
-                        if (index == reactions.length - 1) {
-                            this._openDrawer(listItems);
-                        } else {
-                            callBack(reactions, index + 1, _setUsersList)
-                        }
+                    listItems.push({
+                        text: listItem.innerHTML
+                    })
+                    if (index == reactions.length - 1) {
+                        this._openDrawer(listItems);
+                    } else {
+                        callBack(reactions, index + 1, _setUsersList)
+                    }
                 } else if (index == reactions.length - 1) {
                     this._openDrawer(listItems);
                 }
